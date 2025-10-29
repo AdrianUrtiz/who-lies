@@ -1,0 +1,18 @@
+# Dependencies
+node_modules
+dist
+build
+
+# Testing
+coverage
+
+# Prisma
+prisma/migrations
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
