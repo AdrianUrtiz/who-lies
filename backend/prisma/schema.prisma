@@ -1,0 +1,65 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  hostId        String
+  categoryId    String
+  status        RoomStatus @default(WAITING)
+  createdAt     DateTime @default(now())
+  startedAt     DateTime?
+  currentRound  Int      @default(1)
+  players       Player[]
+  votes         Vote[]
+
+  @@map("rooms")
+}
+
+model Player {
+  id          String   @id @default(uuid())
+  roomId      String
+  name        String
+  character   String?
+  isLiar      Boolean  @default(false)
+  hasRevealed Boolean  @default(false)
+  isReady     Boolean  @default(false)
+  isEliminated Boolean @default(false)
+  joinedAt    DateTime @default(now())
+  room        Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  votesGiven  Vote[]   @relation("VoterRelation")
+  votesReceived Vote[] @relation("VotedForRelation")
+
+  @@map("players")
+}
+
+model Vote {
+  id          String   @id @default(uuid())
+  roomId      String
+  voterId     String
+  votedForId  String
+  round       Int
+  createdAt   DateTime @default(now())
+  room        Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  voter       Player   @relation("VoterRelation", fields: [voterId], references: [id], onDelete: Cascade)
+  votedFor    Player   @relation("VotedForRelation", fields: [votedForId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, voterId, round])
+  @@map("votes")
+}
+
+enum RoomStatus {
+  WAITING
+  PLAYING
+  VOTING
+  FINISHED
+}
