@@ -18,6 +18,15 @@ const PRIVATE_PLAYER_FIELDS = [
   ...PUBLIC_PLAYER_FIELDS,
   'isLiar',
   'character',
+  // P2-T4: el secreto viaja solo por ACK / canal privado al dueño.
+  'secret',
+] as const
+
+/** Roles revelados (FINISHED): como la pública + isLiar/character, SIN secret. */
+const REVEAL_PLAYER_FIELDS = [
+  ...PUBLIC_PLAYER_FIELDS,
+  'isLiar',
+  'character',
 ] as const
 
 function pick(
@@ -31,11 +40,11 @@ function pick(
   return out
 }
 
-/** Allowlist pública: sin isLiar ni character (salvo revealRoles). */
+/** Allowlist pública: sin isLiar/character/secret (salvo revealRoles). */
 export function toPublicPlayer(player: any, revealRoles: boolean) {
   if (!player) return player
   if (revealRoles)
-    return pick(player as Record<string, unknown>, PRIVATE_PLAYER_FIELDS)
+    return pick(player as Record<string, unknown>, REVEAL_PLAYER_FIELDS)
   return pick(player as Record<string, unknown>, PUBLIC_PLAYER_FIELDS)
 }
 

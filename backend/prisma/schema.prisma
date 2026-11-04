@@ -30,6 +30,8 @@ model Player {
   id          String   @id @default(uuid())
   roomId      String
   name        String
+  // P2-T4: secreto de asiento (prueba de titularidad entre sockets).
+  secret      String   @unique @default(uuid())
   character   String?
   isLiar      Boolean  @default(false)
   hasRevealed Boolean  @default(false)

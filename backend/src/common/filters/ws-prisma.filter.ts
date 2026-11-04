@@ -7,7 +7,12 @@ import {
 import { BaseWsExceptionFilter, WsException } from '@nestjs/websockets'
 import { Socket } from 'socket.io'
 
-export type WsErrorCode = 'BAD_REQUEST' | 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN'
+export type WsErrorCode =
+  | 'BAD_REQUEST'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'FORBIDDEN'
+  | 'RATE_LIMITED'
 
 export interface WsErrorPayload {
   code: WsErrorCode
@@ -111,6 +116,7 @@ export class WsPrismaFilter extends BaseWsExceptionFilter {
       code === 'NOT_FOUND' ||
       code === 'CONFLICT' ||
       code === 'FORBIDDEN' ||
+      code === 'RATE_LIMITED' ||
       code === 'BAD_REQUEST'
     ) {
       return code

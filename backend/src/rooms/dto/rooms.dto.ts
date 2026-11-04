@@ -85,6 +85,10 @@ export class RejoinDto {
 
   @IsUUID('4', { message: 'INVALID_PLAYER_ID' })
   playerId!: string
+
+  // P2-T4: prueba de titularidad del asiento entre sockets.
+  @IsUUID('4', { message: 'INVALID_SEAT' })
+  secret!: string
 }
 
 export class PlayerActionDto {
@@ -93,6 +97,10 @@ export class PlayerActionDto {
 
   @IsUUID('4', { message: 'INVALID_PLAYER_ID' })
   playerId!: string
+
+  // P2-T4: titularidad del asiento en cada mutación (no solo binding).
+  @IsUUID('4', { message: 'INVALID_SEAT' })
+  secret!: string
 }
 
 /** Acciones solo-host: mutan el estado del juego (P0-T5). */
@@ -102,6 +110,10 @@ export class HostRoomDto {
 
   @IsUUID('4', { message: 'INVALID_PLAYER_ID' })
   requesterPlayerId!: string
+
+  // P2-T4: secreto del host.
+  @IsUUID('4', { message: 'INVALID_SEAT' })
+  secret!: string
 }
 
 export class VoteDto {
@@ -114,4 +126,8 @@ export class VoteDto {
   @IsUUID('4', { message: 'INVALID_PLAYER_ID' })
   @IsNotEqualTo('voterId', { message: 'CANNOT_VOTE_SELF' })
   votedForId!: string
+
+  // P2-T4: secreto del votante.
+  @IsUUID('4', { message: 'INVALID_SEAT' })
+  secret!: string
 }

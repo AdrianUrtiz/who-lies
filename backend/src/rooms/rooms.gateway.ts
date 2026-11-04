@@ -19,6 +19,8 @@ import {
   toPublicPlayer,
 } from './rooms-view.mapper'
 import { WsPrismaFilter } from '../common/filters/ws-prisma.filter'
+import { RedisService } from '../common/redis/redis.service'
+import { WsRateLimitService } from '../common/rate-limit/ws-rate-limit.service'
 import {
   CreateRoomDto,
   JoinRoomDto,
@@ -38,6 +40,7 @@ type Ack = AckOk | AckErr
  * mapea a ACK `{success:false, code, error}`. No se relanza en el gateway
  * porque el throw viaja al evento 'exception' y el ACK del cliente expira
  * (medido con probe WS), rompiendo el contrato ACK que usan frontend y e2e.
+ * P2-T2: RATE_LIMITED usa la misma forma ACK.
  */
 function toWsError(error: unknown): AckErr {
   if (error instanceof WsException) {
@@ -48,6 +51,7 @@ function toWsError(error: unknown): AckErr {
       e.code === 'NOT_FOUND' ||
       e.code === 'CONFLICT' ||
       e.code === 'FORBIDDEN' ||
+      e.code === 'RATE_LIMITED' ||
       e.code === 'BAD_REQUEST'
         ? e.code
         : 'BAD_REQUEST'
@@ -137,9 +141,20 @@ function socketPlayerId(client: Socket): string | undefined {
   return (client.data as { playerId?: string } | undefined)?.playerId
 }
 
+const ROLES_CHANNEL = 'who-lies:roles'
+const GRACE_CANCEL_CHANNEL = 'who-lies:grace-cancel'
+
+function parseWsOrigins(): string | string[] {
+  const list = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  return list.length <= 1 ? (list[0] ?? 'http://localhost:5173') : list
+}
+
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    origin: parseWsOrigins(),
     credentials: true,
   },
 })
@@ -147,7 +162,7 @@ function socketPlayerId(client: Socket): string | undefined {
 export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RoomsGateway.name)
 
-  /** P1-B2: presencia en memoria (una sola réplica; Redis queda para P2). */
+  /** P1-B2: presencia en memoria + fan-out Redis (P2-T1 multi-instancia). */
   private bindings = new Map<string, { playerId: string; roomId: string }>()
   private playerSockets = new Map<string, Set<string>>()
   private graceTimers = new Map<string, NodeJS.Timeout>()
@@ -155,7 +170,49 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server
 
-  constructor(private readonly roomsService: RoomsService) {}
+  constructor(
+    private readonly roomsService: RoomsService,
+    private readonly redis: RedisService,
+    private readonly rateLimit: WsRateLimitService,
+  ) {}
+
+  /** Suscripciones Redis (roles + cancelación de gracia entre réplicas). */
+  async onModuleInit(): Promise<void> {
+    await this.redis.subscribe(ROLES_CHANNEL, (payload) => {
+      const msg = payload as {
+        roomId?: string
+        roles?: Record<string, unknown>
+      }
+      if (!msg || typeof msg.roomId !== 'string' || !msg.roles) return
+      this.deliverRolesLocal(msg.roomId, msg.roles)
+    })
+    await this.redis.subscribe(GRACE_CANCEL_CHANNEL, (payload) => {
+      const msg = payload as { playerId?: string }
+      if (msg && typeof msg.playerId === 'string') {
+        this.cancelGrace(msg.playerId)
+      }
+    })
+  }
+
+  /** P2-T2: consume cuota o lanza RATE_LIMITED en forma ACK. */
+  private checkRate(
+    key: string,
+    action: 'create' | 'join' | 'vote' | 'default',
+  ): void {
+    if (!this.rateLimit.consume(key, action)) {
+      throw new WsException({
+        code: 'RATE_LIMITED',
+        message: 'Too many requests, slow down',
+      })
+    }
+  }
+
+  private clientKey(client: Socket): string {
+    const addr =
+      (client.handshake as { address?: string } | undefined)?.address ??
+      client.id
+    return `ip:${addr}`
+  }
 
   /** Gracia de reconexión; configurable por env para tests. */
   private graceMs(): number {
@@ -166,6 +223,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /** Vincula socket<->jugador y cancela el timer de gracia si existía. */
   private track(client: Socket, playerId: string, roomId: string): void {
     this.cancelGrace(playerId)
+    // P2-T1: avisa a otras réplicas para que cancelen su gracia también.
+    void this.redis.publish(GRACE_CANCEL_CHANNEL, { playerId })
     this.bindings.set(client.id, { playerId, roomId })
     ;(client.data as { playerId?: string }).playerId = playerId
     let set = this.playerSockets.get(playerId)
@@ -229,16 +288,29 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const timer = setTimeout(() => {
       this.graceTimers.delete(b.playerId)
       if (this.hasLiveSocket(b.playerId)) return
-      void this.roomsService
-        .removePlayer(b.playerId, b.roomId, b.playerId)
-        .then((res) => {
+      void (async () => {
+        // P2-T1: lock entre réplicas para no liberar el asiento dos veces.
+        const locked = await this.redis.acquireLock(
+          `who-lies:grace:${b.playerId}`,
+          30_000,
+        )
+        if (!locked) return
+        if (this.hasLiveSocket(b.playerId)) return
+        try {
+          const res = await this.roomsService.removePlayer(
+            b.playerId,
+            b.roomId,
+            b.playerId,
+          )
           if (res.deleted || !res.room) {
             this.server.to(b.roomId).emit('roomClosed', { roomId: b.roomId })
           } else {
             this.server.to(b.roomId).emit('roomUpdated', toPublicRoom(res.room))
           }
-        })
-        .catch(() => undefined)
+        } catch {
+          // La sala/jugador pudo borrarse entre tanto; nada que emitir.
+        }
+      })()
     }, ms)
     // Evita que el timer mantenga vivo el proceso en tests.
     if (typeof timer.unref === 'function') timer.unref()
@@ -247,17 +319,33 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private async emitPrivateRoles(roomId: string, fullRoom: any) {
     // P0-T2: cada socket recibe su rol por canal directo, el broadcast es público.
+    // P2-T1: fan-out por Redis para llegar a sockets de otras réplicas.
     try {
-      const sockets = await this.server.in(roomId).fetchSockets()
-      for (const s of sockets) {
-        const playerId = (s.data as { playerId?: string } | undefined)?.playerId
-        if (!playerId) continue
-        const me = (fullRoom.players as any[]).find((p) => p.id === playerId)
-        if (!me) continue
-        this.server.to(s.id).emit('yourPlayerUpdated', toPrivatePlayer(me))
+      const roles: Record<string, unknown> = {}
+      for (const p of fullRoom.players as any[]) {
+        roles[p.id] = toPrivatePlayer(p)
       }
+      await this.redis.publish(ROLES_CHANNEL, { roomId, roles })
+      this.deliverRolesLocal(roomId, roles)
     } catch {
       // No bloquea el flujo principal si el adaptador no soporta fetchSockets.
+    }
+  }
+
+  /** Entrega roles a los sockets LOCALES de esta réplica. */
+  private deliverRolesLocal(
+    roomId: string,
+    roles: Record<string, unknown>,
+  ): void {
+    for (const [socketId, b] of this.bindings) {
+      if (b.roomId !== roomId) continue
+      const role = roles[b.playerId]
+      if (!role) continue
+      try {
+        this.server.to(socketId).emit('yourPlayerUpdated', role)
+      } catch {
+        // Best-effort.
+      }
     }
   }
 
@@ -267,6 +355,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ): Promise<Ack> {
     try {
+      // P2-T2: pre-asiento, clave por IP.
+      this.checkRate(this.clientKey(client), 'create')
       const parsed = await parseDto(CreateRoomDto, raw)
       if (!parsed.ok) return parsed.error
       const data = parsed.value
@@ -294,6 +384,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ): Promise<Ack> {
     try {
+      // P2-T2: pre-asiento, clave por IP.
+      this.checkRate(this.clientKey(client), 'join')
       const parsed = await parseDto(JoinRoomDto, raw)
       if (!parsed.ok) return parsed.error
       const data = parsed.value
@@ -342,6 +434,10 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!player) {
         return { success: false, code: 'NOT_FOUND', error: 'Seat not found' }
       }
+      // P2-T4: el secreto prueba la titularidad del asiento entre sockets.
+      if (player.secret !== data.secret) {
+        return { success: false, code: 'FORBIDDEN', error: 'INVALID_SEAT' }
+      }
 
       this.track(client, player.id, room.id)
       let fresh = player
@@ -389,6 +485,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const room = await this.roomsService.startGame(
         data.roomId,
         data.requesterPlayerId,
+        data.secret,
       )
       const publicRoom = toPublicRoom(room)
 
@@ -424,6 +521,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.playerId,
         data.roomId,
         bound,
+        data.secret,
       )
       const room = await this.roomsService.getRoomById(data.roomId)
 
@@ -456,6 +554,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.playerId,
         data.roomId,
         bound,
+        data.secret,
       )
       const room = await this.roomsService.getRoomById(data.roomId)
 
@@ -498,6 +597,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.playerId,
         data.roomId,
         bound,
+        data.secret,
       )
       this.cancelGrace(data.playerId)
       if (res.deleted || !res.room) {
@@ -538,6 +638,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const room = await this.roomsService.startVoting(
         data.roomId,
         data.requesterPlayerId,
+        data.secret,
       )
 
       this.server.to(room.id).emit('votingStarted', toPublicRoom(room))
@@ -561,11 +662,14 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!bound) {
         return { success: false, code: 'FORBIDDEN', error: 'NOT_JOINED' }
       }
+      // P2-T2: con asiento, clave por jugador.
+      this.checkRate(`player:${bound}`, 'vote')
       await this.roomsService.submitVote(
         data.roomId,
         data.voterId,
         data.votedForId,
         bound,
+        data.secret,
       )
 
       const room = await this.roomsService.getRoomById(data.roomId)
@@ -602,6 +706,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const results = await this.roomsService.processVotingResults(
         data.roomId,
         data.requesterPlayerId,
+        data.secret,
       )
 
       // P0-T2: liar solo viaja si terminó (o fue cazado); si no, null.
@@ -647,6 +752,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const room = await this.roomsService.continueGame(
         data.roomId,
         data.requesterPlayerId,
+        data.secret,
       )
       const publicRoom = toPublicRoom(room)
 

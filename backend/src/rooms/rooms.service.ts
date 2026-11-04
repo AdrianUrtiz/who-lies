@@ -5,7 +5,12 @@ import { RoomStatus } from '@prisma/client'
 import { getRandomCharacter, CATEGORY_IDS } from '../constants/characters'
 import { Prisma } from '@prisma/client'
 
-export type WsCode = 'BAD_REQUEST' | 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN'
+export type WsCode =
+  | 'BAD_REQUEST'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'FORBIDDEN'
+  | 'RATE_LIMITED'
 
 function fail(code: WsCode, message: string): never {
   throw new WsException({ code, message })
@@ -68,6 +73,21 @@ export class RoomsService {
       fail('FORBIDDEN', 'Cannot act for another player')
     }
     return target
+  }
+
+  /** P2-T4: el secreto prueba la titularidad (se exige cuando se aporta). */
+  private assertSeatSecret(
+    holder: { secret?: string | null } | undefined | null,
+    secret: unknown,
+  ): void {
+    if (
+      !holder ||
+      typeof secret !== 'string' ||
+      secret.length === 0 ||
+      holder.secret !== secret
+    ) {
+      fail('FORBIDDEN', 'INVALID_SEAT')
+    }
   }
 
   async createRoom(categoryId: string, hostName: string) {
@@ -176,10 +196,16 @@ export class RoomsService {
     }
   }
 
-  async startGame(roomId: string, requesterPlayerId: string) {
+  async startGame(roomId: string, requesterPlayerId: string, secret?: string) {
     assertUuid(roomId, 'BAD_REQUEST', 'INVALID_ROOM_ID')
     const room = await this.getRoomById(roomId)
     this.assertHost(room, requesterPlayerId)
+    if (secret !== undefined) {
+      this.assertSeatSecret(
+        room.players.find((p) => p.id === requesterPlayerId),
+        secret,
+      )
+    }
 
     if (room.players.length < 3) {
       fail('BAD_REQUEST', 'Need at least 3 players to start')
@@ -234,9 +260,22 @@ export class RoomsService {
     return player
   }
 
-  async revealCharacter(playerId: string, roomId?: string, actorId?: string) {
+  async revealCharacter(
+    playerId: string,
+    roomId?: string,
+    actorId?: string,
+    secret?: string,
+  ) {
     if (actorId !== undefined) this.assertActor(playerId, actorId)
-    if (roomId) await this.requirePlayerInRoom(playerId, roomId)
+    if (roomId) {
+      const owner = await this.requirePlayerInRoom(playerId, roomId)
+      if (secret !== undefined) this.assertSeatSecret(owner, secret)
+    } else if (secret !== undefined) {
+      const owner = await this.prisma.player.findUnique({
+        where: { id: playerId },
+      })
+      this.assertSeatSecret(owner, secret)
+    }
     try {
       return await this.prisma.player.update({
         where: { id: playerId },
@@ -250,9 +289,22 @@ export class RoomsService {
     }
   }
 
-  async setPlayerReady(playerId: string, roomId?: string, actorId?: string) {
+  async setPlayerReady(
+    playerId: string,
+    roomId?: string,
+    actorId?: string,
+    secret?: string,
+  ) {
     if (actorId !== undefined) this.assertActor(playerId, actorId)
-    if (roomId) await this.requirePlayerInRoom(playerId, roomId)
+    if (roomId) {
+      const owner = await this.requirePlayerInRoom(playerId, roomId)
+      if (secret !== undefined) this.assertSeatSecret(owner, secret)
+    } else if (secret !== undefined) {
+      const owner = await this.prisma.player.findUnique({
+        where: { id: playerId },
+      })
+      this.assertSeatSecret(owner, secret)
+    }
     try {
       return await this.prisma.player.update({
         where: { id: playerId },
@@ -306,9 +358,15 @@ export class RoomsService {
    * P1-B3: salida real. Borra al jugador (votos en cascada); si la sala queda
    * vacía la borra; si era el host reasigna al más antiguo.
    */
-  async removePlayer(playerId: string, roomId: string, actorId?: string) {
+  async removePlayer(
+    playerId: string,
+    roomId: string,
+    actorId?: string,
+    secret?: string,
+  ) {
     if (actorId !== undefined) this.assertActor(playerId, actorId)
     const player = await this.requirePlayerInRoom(playerId, roomId)
+    if (secret !== undefined) this.assertSeatSecret(player, secret)
     const room = await this.getRoomById(roomId)
 
     await this.prisma.player.delete({ where: { id: player.id } })
@@ -368,10 +426,20 @@ export class RoomsService {
     return { waitingDeleted: waiting.count, finishedDeleted: finished.count }
   }
 
-  async startVoting(roomId: string, requesterPlayerId: string) {
+  async startVoting(
+    roomId: string,
+    requesterPlayerId: string,
+    secret?: string,
+  ) {
     assertUuid(roomId, 'BAD_REQUEST', 'INVALID_ROOM_ID')
     const room = await this.getRoomById(roomId)
     this.assertHost(room, requesterPlayerId)
+    if (secret !== undefined) {
+      this.assertSeatSecret(
+        room.players.find((p) => p.id === requesterPlayerId),
+        secret,
+      )
+    }
 
     if (room.status !== RoomStatus.PLAYING) {
       fail('BAD_REQUEST', 'Can only start voting during gameplay')
@@ -400,6 +468,7 @@ export class RoomsService {
     voterId: string,
     votedForId: string,
     actorId?: string,
+    secret?: string,
   ) {
     assertUuid(roomId, 'BAD_REQUEST', 'INVALID_ROOM_ID')
     if (actorId !== undefined) this.assertActor(voterId, actorId)
@@ -413,6 +482,7 @@ export class RoomsService {
     if (!voter || voter.isEliminated) {
       fail('BAD_REQUEST', 'Player cannot vote')
     }
+    if (secret !== undefined) this.assertSeatSecret(voter, secret)
 
     if (voterId === votedForId) {
       fail('BAD_REQUEST', 'Cannot vote for yourself')
@@ -489,11 +559,21 @@ export class RoomsService {
     }
   }
 
-  async processVotingResults(roomId: string, requesterPlayerId: string) {
+  async processVotingResults(
+    roomId: string,
+    requesterPlayerId: string,
+    secret?: string,
+  ) {
     assertUuid(roomId, 'BAD_REQUEST', 'INVALID_ROOM_ID')
     // P0-T5: guard de estado antes de mutar + check de host.
     const current = await this.getRoomById(roomId)
     this.assertHost(current, requesterPlayerId)
+    if (secret !== undefined) {
+      this.assertSeatSecret(
+        current.players.find((p) => p.id === requesterPlayerId),
+        secret,
+      )
+    }
     if (current.status !== RoomStatus.VOTING) {
       fail('BAD_REQUEST', 'Voting is not active')
     }
@@ -611,10 +691,20 @@ export class RoomsService {
   }
 
   /** P0-T5: continueGame en service con guard (antes estaba en gateway sin validar). */
-  async continueGame(roomId: string, requesterPlayerId: string) {
+  async continueGame(
+    roomId: string,
+    requesterPlayerId: string,
+    secret?: string,
+  ) {
     assertUuid(roomId, 'BAD_REQUEST', 'INVALID_ROOM_ID')
     const room = await this.getRoomById(roomId)
     this.assertHost(room, requesterPlayerId)
+    if (secret !== undefined) {
+      this.assertSeatSecret(
+        room.players.find((p) => p.id === requesterPlayerId),
+        secret,
+      )
+    }
     if (room.status === RoomStatus.FINISHED) {
       fail('BAD_REQUEST', 'Game already finished')
     }
