@@ -1,10 +1,43 @@
 import { socketService } from './socket'
 import { useGameStore } from '../store/useGameStore'
+import { clearSession, loadSession } from './session'
 import type { Room, VotingResults } from '../store/useGameStore'
 
 export const setupGameEvents = () => {
   const socket = socketService.getSocket()
-  const { setRoom, updatePlayers, setVotingResults } = useGameStore.getState()
+  const { setRoom, setCurrentPlayer, setVotingResults } = useGameStore.getState()
+
+  // P0-T2: rol privado por canal directo (el broadcast es público, sin isLiar).
+  socket.on('yourPlayerUpdated', (player) => {
+    setCurrentPlayer(player)
+  })
+
+  // P1-B1: rejoin en cada (re)conexión: cubre F5 (montaje) y caídas breves
+  // de socket sin recargar (nuevo socket.id sin binding ni join en servidor).
+  // Idempotente: reutiliza el asiento, no duplica Player.
+  socket.on('connect', () => {
+    const session = loadSession()
+    if (!session) return
+    rejoinRoom(session.code, session.playerId)
+      .then((response) => {
+        const st = useGameStore.getState()
+        st.setRoom(response.room)
+        st.setCurrentPlayer(response.player)
+      })
+      .catch(() => {
+        // Sala/asiento desaparecidos: volver al inicio sin sesión.
+        clearSession()
+      })
+  })
+
+  // P1-B3: la sala desapareció (último jugador salió / limpieza).
+  socket.on('roomClosed', ({ roomId }: { roomId: string }) => {
+    const { room, reset } = useGameStore.getState()
+    if (room && room.id === roomId) {
+      clearSession()
+      reset()
+    }
+  })
 
   // Evento cuando la sala se actualiza (nuevo jugador, etc.)
   socket.on('roomUpdated', (room: Room) => {
@@ -63,6 +96,9 @@ export const setupGameEvents = () => {
 
 export const cleanupGameEvents = () => {
   const socket = socketService.getSocket()
+  socket.off('connect')
+  socket.off('yourPlayerUpdated')
+  socket.off('roomClosed')
   socket.off('roomUpdated')
   socket.off('gameStarted')
   socket.off('playerRevealed')
@@ -103,16 +139,37 @@ export const joinRoom = (code: string, playerName: string): Promise<any> => {
   })
 }
 
-export const startGame = (roomId: string): Promise<any> => {
+// P1-B1: reentrada con el mismo asiento (no crea Player nuevo).
+export const rejoinRoom = (code: string, playerId: string): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('startGame', { roomId }, (response: any) => {
+    socket.emit('rejoinRoom', { code, playerId }, (response: any) => {
       if (response.success) {
         resolve(response)
       } else {
         reject(new Error(response.error))
       }
     })
+  })
+}
+
+export const startGame = (
+  roomId: string,
+  requesterPlayerId: string
+): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const socket = socketService.getSocket()
+    socket.emit(
+      'startGame',
+      { roomId, requesterPlayerId },
+      (response: any) => {
+        if (response.success) {
+          resolve(response)
+        } else {
+          reject(new Error(response.error))
+        }
+      }
+    )
   })
 }
 
@@ -148,16 +205,23 @@ export const setPlayerReady = (
   })
 }
 
-export const startVoting = (roomId: string): Promise<any> => {
+export const startVoting = (
+  roomId: string,
+  requesterPlayerId: string
+): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('startVoting', { roomId }, (response: any) => {
-      if (response.success) {
-        resolve(response)
-      } else {
-        reject(new Error(response.error))
+    socket.emit(
+      'startVoting',
+      { roomId, requesterPlayerId },
+      (response: any) => {
+        if (response.success) {
+          resolve(response)
+        } else {
+          reject(new Error(response.error))
+        }
       }
-    })
+    )
   })
 }
 
@@ -182,36 +246,50 @@ export const submitVote = (
   })
 }
 
-export const processVoting = (roomId: string): Promise<any> => {
+export const processVoting = (
+  roomId: string,
+  requesterPlayerId: string
+): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('processVoting', { roomId }, (response: any) => {
-      if (response.success) {
-        resolve(response)
-      } else {
-        reject(new Error(response.error))
+    socket.emit(
+      'processVoting',
+      { roomId, requesterPlayerId },
+      (response: any) => {
+        if (response.success) {
+          resolve(response)
+        } else {
+          reject(new Error(response.error))
+        }
       }
-    })
+    )
   })
 }
 
-export const continueGame = (roomId: string): Promise<any> => {
+export const continueGame = (
+  roomId: string,
+  requesterPlayerId: string
+): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('continueGame', { roomId }, (response: any) => {
-      if (response.success) {
-        resolve(response)
-      } else {
-        reject(new Error(response.error))
+    socket.emit(
+      'continueGame',
+      { roomId, requesterPlayerId },
+      (response: any) => {
+        if (response.success) {
+          resolve(response)
+        } else {
+          reject(new Error(response.error))
+        }
       }
-    })
+    )
   })
 }
 
-export const leaveRoom = (roomId: string): Promise<any> => {
+export const leaveRoom = (roomId: string, playerId: string): Promise<any> => {
   return new Promise((resolve) => {
     const socket = socketService.getSocket()
-    socket.emit('leaveRoom', { roomId }, (response: any) => {
+    socket.emit('leaveRoom', { roomId, playerId }, (response: any) => {
       resolve(response)
     })
   })

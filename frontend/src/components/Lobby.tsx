@@ -34,7 +34,14 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
 
     setLoading(true)
     try {
-      await startGame(currentRoom.id)
+      const res = await startGame(currentRoom.id, currentPlayer.id)
+      // P0-T2: el ACK trae tu rol privado; el broadcast es público.
+      if (res?.yourPlayer) {
+        useGameStore.getState().setCurrentPlayer(res.yourPlayer)
+      }
+      if (res?.room) {
+        useGameStore.getState().setRoom(res.room)
+      }
     } catch (error) {
       console.error('Error starting game:', error)
       alert('Error al iniciar el juego')
@@ -122,6 +129,12 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
                   )}
                   {player.id === currentRoom.hostId && (
                     <span className='text-amber-400 text-sm ml-2'>(Host)</span>
+                  )}
+                  {/* P1-B2: presencia */}
+                  {player.isConnected === false && (
+                    <span className='text-slate-500 text-sm ml-2'>
+                      (desconectado)
+                    </span>
                   )}
                 </span>
               </div>

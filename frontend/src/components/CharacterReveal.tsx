@@ -22,9 +22,16 @@ export default function CharacterReveal({
   const currentRoom = storeRoom || room
   const players = currentRoom.players || []
 
-  // Buscar el jugador actualizado en la lista de jugadores
-  const updatedPlayer =
-    players.find((p) => p.id === currentPlayer.id) || currentPlayer
+  // P0-T2: el broadcast es público (sin isLiar/character). El rol propio
+  // viene por canal privado (yourPlayerUpdated) en currentPlayer/store.
+  const roomPlayer = players.find((p) => p.id === currentPlayer.id)
+  const updatedPlayer = {
+    ...currentPlayer,
+    hasRevealed: roomPlayer?.hasRevealed ?? currentPlayer.hasRevealed,
+    isReady: roomPlayer?.isReady ?? currentPlayer.isReady,
+    isEliminated: roomPlayer?.isEliminated ?? currentPlayer.isEliminated,
+  }
+  const isLiar = updatedPlayer.isLiar === true
 
   // Usar el estado del servidor para isReady
   const ready = updatedPlayer.isReady
@@ -118,17 +125,15 @@ export default function CharacterReveal({
                 <div
                   className={`w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-6 
                   ${
-                    updatedPlayer.isLiar
+                    isLiar
                       ? 'bg-gradient-to-br from-red-500 to-pink-500'
                       : 'bg-gradient-to-br from-emerald-500 to-cyan-500'
                   }`}
                 >
-                  <span className='text-5xl'>
-                    {updatedPlayer.isLiar ? '❓' : '✓'}
-                  </span>
+                  <span className='text-5xl'>{isLiar ? '❓' : '✓'}</span>
                 </div>
 
-                {updatedPlayer.isLiar ? (
+                {isLiar ? (
                   <>
                     <h2 className='text-4xl font-bold text-white mb-4'>
                       Tu rol es:

@@ -1,5 +1,5 @@
 import { Trophy, Target, Home, Users, TrendingUp } from 'lucide-react'
-import type { Room, Player } from '../store/useGameStore'
+import type { Room, Player, PrivatePlayer } from '../store/useGameStore'
 
 interface GameOverProps {
   room: Room
@@ -12,8 +12,9 @@ export default function GameOver({
   currentPlayer,
   onBackToHome,
 }: GameOverProps) {
-  // Encontrar al mentiroso
-  const liar = room.players.find((p) => p.isLiar)
+  // Encontrar al mentiroso (FINISHED incluye roles en el broadcast).
+  const playersWithRoles = room.players as PrivatePlayer[]
+  const liar = playersWithRoles.find((p) => p.isLiar)
 
   // Determinar quién ganó
   const liarEliminated = liar?.isEliminated || false
@@ -21,8 +22,8 @@ export default function GameOver({
   const liarWon = !liarEliminated
 
   // Obtener jugadores supervivientes (no eliminados)
-  const survivors = room.players.filter((p) => !p.isEliminated)
-  const eliminated = room.players.filter((p) => p.isEliminated)
+  const survivors = playersWithRoles.filter((p) => !p.isEliminated)
+  const eliminated = playersWithRoles.filter((p) => p.isEliminated)
 
   return (
     <div className='min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4'>
@@ -185,7 +186,7 @@ export default function GameOver({
                 Eliminados ({eliminated.length})
               </h3>
               <div className='space-y-2'>
-                {eliminated.map((player, index) => (
+                {eliminated.map((player) => (
                   <div
                     key={player.id}
                     className='bg-red-500/5 border border-red-500/20 rounded-lg p-3 flex items-center gap-3 opacity-60'

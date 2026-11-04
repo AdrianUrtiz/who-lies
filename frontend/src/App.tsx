@@ -13,7 +13,9 @@ import {
   cleanupGameEvents,
   createRoom,
   joinRoom,
+  leaveRoom,
 } from './sockets/gameEvents'
+import { saveSession, clearSession } from './sockets/session'
 
 type GameScreen =
   | 'home'
@@ -42,7 +44,9 @@ function App() {
     // Conectar al servidor Socket.IO
     socketService.connect()
 
-    // Configurar eventos de Socket.IO
+    // Configurar eventos de Socket.IO.
+    // P1-B1: el rejoin vive en el handler 'connect' de setupGameEvents:
+    // cubre F5 (montaje) y reconexiones sin recargar con el mismo código.
     setupGameEvents()
 
     return () => {
@@ -94,6 +98,12 @@ function App() {
 
       setRoom(response.room)
       setCurrentPlayer(response.player)
+      // P1-B1: persistir asiento para rejoin tras F5.
+      saveSession({
+        roomId: response.room.id,
+        playerId: response.player.id,
+        code: response.room.code,
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al crear la partida')
       console.error('Error creating game:', err)
@@ -110,6 +120,11 @@ function App() {
       const response = await joinRoom(code, playerName)
       setRoom(response.room)
       setCurrentPlayer(response.player)
+      saveSession({
+        roomId: response.room.id,
+        playerId: response.player.id,
+        code: response.room.code,
+      })
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Error al unirse a la partida'
@@ -121,6 +136,12 @@ function App() {
   }
 
   const handleBackToHome = () => {
+    // P1-B3: liberar el asiento en el servidor (best effort) y limpiar sesión.
+    const { room: r, currentPlayer: p } = useGameStore.getState()
+    if (r && p) {
+      leaveRoom(r.id, p.id).catch(() => undefined)
+      clearSession()
+    }
     reset()
   }
 

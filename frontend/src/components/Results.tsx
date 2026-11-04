@@ -22,11 +22,12 @@ export default function Results({
 
   const currentRoom = storeRoom || results.room
   const { eliminatedPlayer, liarCaught, liar, gameFinished } = results
+  const tie = results.tie === true
 
   const handleContinueGame = async () => {
     setLoading(true)
     try {
-      await continueGame(currentRoom.id)
+      await continueGame(currentRoom.id, currentPlayer.id)
     } catch (error) {
       console.error('Error continuing game:', error)
       alert('Error al continuar el juego')
@@ -64,17 +65,31 @@ export default function Results({
           <h2 className='text-4xl font-bold text-white mb-2'>
             {playersWon && '¡Los Jugadores Ganan!'}
             {liarWon && '¡El Mentiroso Gana!'}
-            {!gameFinished && '¡Jugador Eliminado!'}
+            {tie && '¡Empate!'}
+            {!gameFinished && !tie && '¡Jugador Eliminado!'}
           </h2>
 
           <p className='text-slate-400 text-lg'>
             {playersWon && 'Atraparon al mentiroso'}
             {liarWon && 'El mentiroso logró engañar a todos'}
-            {!gameFinished && 'El juego continúa...'}
+            {tie && 'Votación empatada: revoten para desempatar'}
+            {!gameFinished && !tie && 'El juego continúa...'}
           </p>
         </div>
 
         <div className='bg-slate-800/50 backdrop-blur-lg rounded-2xl shadow-2xl p-8 border border-slate-700 mb-6'>
+          {/* Empate P0-T6: no hay eliminado, hay que revotar */}
+          {tie || !eliminatedPlayer ? (
+            <div className='bg-amber-500/10 border border-amber-500/30 rounded-lg p-6 text-center'>
+              <p className='text-amber-300 text-xl font-bold mb-2'>
+                Votación empatada
+              </p>
+              <p className='text-slate-300'>
+                Nadie es eliminado. Vuelvan a discutir y voten de nuevo.
+              </p>
+            </div>
+          ) : (
+            <>
           {/* Jugador Eliminado */}
           <div className='mb-8'>
             <h3 className='text-xl font-semibold text-white mb-4 text-center'>
@@ -89,7 +104,7 @@ export default function Results({
                   {eliminatedPlayer.name}
                 </p>
                 <p className='text-slate-400'>
-                  {eliminatedPlayer.id === liar.id
+                  {liar && eliminatedPlayer.id === liar.id
                     ? '🎭 Era el MENTIROSO'
                     : '✅ Era inocente'}
                 </p>
@@ -100,7 +115,8 @@ export default function Results({
             </div>
           </div>
 
-          {/* Info del Mentiroso */}
+          {/* Info del Mentiroso (P0-T2: solo viaja si terminó/fue cazado) */}
+          {liar ? (
           <div className='mb-8'>
             <h3 className='text-xl font-semibold text-white mb-4 text-center'>
               El Mentiroso
@@ -125,6 +141,13 @@ export default function Results({
               )}
             </div>
           </div>
+          ) : (
+            <div className='mb-8 bg-slate-900/50 rounded-lg p-4 text-center text-slate-400'>
+              La identidad del mentiroso sigue oculta... el juego continúa.
+            </div>
+          )}
+            </>
+          )}
 
           {/* Jugadores Restantes */}
           {!gameFinished && (

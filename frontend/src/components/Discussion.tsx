@@ -31,7 +31,7 @@ export default function Discussion({
 
     setLoading(true)
     try {
-      await startVoting(currentRoom.id)
+      await startVoting(currentRoom.id, currentPlayer.id)
     } catch (error) {
       console.error('Error starting voting:', error)
       alert('Error al iniciar votación')

@@ -47,14 +47,14 @@ export default function Voting({ room, currentPlayer, isHost }: VotingProps) {
     setLoading(true)
     try {
       console.log('🗳️ Procesando votación...')
-      await processVoting(currentRoom.id)
+      await processVoting(currentRoom.id, currentPlayer.id)
     } catch (error) {
       console.error('Error processing voting:', error)
       alert('Error al procesar votación')
     } finally {
       setLoading(false)
     }
-  }, [currentRoom.id, loading])
+  }, [currentRoom.id, currentPlayer.id, loading])
 
   // Procesar automáticamente cuando todos hayan votado (solo el host)
   useEffect(() => {
