@@ -415,11 +415,17 @@ export const CHARACTER_CATEGORIES: CharacterCategory[] = [
   },
 ]
 
+export const CATEGORY_IDS: string[] = CHARACTER_CATEGORIES.map((c) => c.id)
+
+import { WsException } from '@nestjs/websockets'
+
 // Función para obtener un personaje aleatorio de una categoría
 export function getRandomCharacter(categoryId: string): string {
   const category = CHARACTER_CATEGORIES.find((cat) => cat.id === categoryId)
   if (!category || category.characters.length === 0) {
-    return 'Personaje Misterioso'
+    // P0-T1: sin fallback silencioso; categoría inválida es error.
+    // WsException (no HTTP) porque el único consumidor es RoomsService (WS).
+    throw new WsException({ code: 'BAD_REQUEST', message: 'INVALID_CATEGORY' })
   }
   const randomIndex = Math.floor(Math.random() * category.characters.length)
   return category.characters[randomIndex]

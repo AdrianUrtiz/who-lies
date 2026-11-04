@@ -1,0 +1,1 @@
+ALTER TABLE "players" ADD COLUMN "isConnected" BOOLEAN NOT NULL DEFAULT true;
