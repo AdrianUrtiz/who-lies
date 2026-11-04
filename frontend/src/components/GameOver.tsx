@@ -1,5 +1,7 @@
 import { Trophy, Target, Home, Users, TrendingUp } from 'lucide-react'
 import type { Room, Player, PrivatePlayer } from '../store/useGameStore'
+import { useI18n } from '../i18n'
+import { fill } from '../i18n'
 
 interface GameOverProps {
   room: Room
@@ -12,6 +14,7 @@ export default function GameOver({
   currentPlayer,
   onBackToHome,
 }: GameOverProps) {
+  const { t } = useI18n()
   // Encontrar al mentiroso (FINISHED incluye roles en el broadcast).
   const playersWithRoles = room.players as PrivatePlayer[]
   const liar = playersWithRoles.find((p) => p.isLiar)
@@ -45,7 +48,7 @@ export default function GameOver({
           </div>
 
           <h1 className='text-5xl font-bold text-white mb-4'>
-            {playersWon ? '¡FIN DEL JUEGO!' : '¡JUEGO TERMINADO!'}
+            {playersWon ? t.gameOver.finished : t.gameOver.ended}
           </h1>
 
           <div
@@ -60,16 +63,12 @@ export default function GameOver({
                 playersWon ? 'text-emerald-300' : 'text-red-300'
               }`}
             >
-              {playersWon
-                ? '👥 ¡Los Jugadores Ganan!'
-                : '🎭 ¡El Mentiroso Gana!'}
+              {playersWon ? t.gameOver.playersWin : t.gameOver.liarWin}
             </p>
           </div>
 
           <p className='text-slate-400 text-lg mt-4'>
-            {playersWon
-              ? 'Lograron descubrir al mentiroso'
-              : 'El mentiroso logró engañar a todos'}
+            {playersWon ? t.gameOver.playersWinHint : t.gameOver.liarWinHint}
           </p>
         </div>
 
@@ -79,7 +78,7 @@ export default function GameOver({
           <div className='mb-8'>
             <h3 className='text-2xl font-semibold text-white mb-4 text-center flex items-center justify-center gap-2'>
               <Target className='w-6 h-6 text-purple-400' />
-              El Mentiroso Era
+              {t.gameOver.liarWas}
             </h3>
             <div className='bg-purple-500/10 border border-purple-500/30 rounded-xl p-6 flex items-center gap-4'>
               <div className='w-20 h-20 bg-purple-500/20 rounded-full flex items-center justify-center text-4xl'>
@@ -87,18 +86,18 @@ export default function GameOver({
               </div>
               <div className='flex-1'>
                 <p className='text-3xl font-bold text-white mb-2'>
-                  {liar?.name || 'Desconocido'}
+                  {liar?.name || t.gameOver.unknown}
                 </p>
                 <p className='text-purple-300'>
-                  No sabía que el personaje era:{' '}
+                  {t.gameOver.liarUnknown}{' '}
                   <span className='font-semibold'>
-                    {liar?.character || 'Desconocido'}
+                    {liar?.character || t.gameOver.unknown}
                   </span>
                 </p>
                 {liar?.id === currentPlayer.id && (
                   <div className='mt-2'>
                     <span className='inline-block px-3 py-1 bg-purple-500/30 rounded-full text-purple-300 text-sm font-semibold'>
-                      👤 Este eras tú
+                      {t.gameOver.youWere}
                     </span>
                   </div>
                 )}
@@ -118,13 +117,15 @@ export default function GameOver({
               <div className='text-3xl font-bold text-white mb-1'>
                 {room.currentRound}
               </div>
-              <div className='text-slate-400 text-sm'>Rondas Jugadas</div>
+              <div className='text-slate-400 text-sm'>{t.gameOver.rounds}</div>
             </div>
             <div className='bg-slate-900/50 rounded-lg p-4 text-center'>
               <div className='text-3xl font-bold text-white mb-1'>
                 {eliminated.length}
               </div>
-              <div className='text-slate-400 text-sm'>Jugadores Eliminados</div>
+              <div className='text-slate-400 text-sm'>
+                {t.gameOver.eliminated}
+              </div>
             </div>
           </div>
 
@@ -133,7 +134,7 @@ export default function GameOver({
             <div className='mb-8'>
               <h3 className='text-xl font-semibold text-white mb-4 flex items-center gap-2'>
                 <Users className='w-5 h-5 text-emerald-400' />
-                Supervivientes ({survivors.length})
+                {fill(t.gameOver.survivors, { n: survivors.length })}
               </h3>
               <div className='grid grid-cols-2 gap-3'>
                 {survivors.map((player, index) => (
@@ -167,7 +168,7 @@ export default function GameOver({
                       </span>
                       {player.id === currentPlayer.id && (
                         <span className='text-emerald-400 text-xs ml-2'>
-                          (Tú)
+                          {t.gameOver.you}
                         </span>
                       )}
                     </div>
@@ -183,7 +184,7 @@ export default function GameOver({
             <div>
               <h3 className='text-xl font-semibold text-white mb-4 flex items-center gap-2'>
                 <TrendingUp className='w-5 h-5 text-red-400 transform rotate-180' />
-                Eliminados ({eliminated.length})
+                {fill(t.gameOver.eliminatedList, { n: eliminated.length })}
               </h3>
               <div className='space-y-2'>
                 {eliminated.map((player) => (
@@ -199,11 +200,13 @@ export default function GameOver({
                         {player.name}
                       </span>
                       {player.id === currentPlayer.id && (
-                        <span className='text-red-400 text-xs ml-2'>(Tú)</span>
+                        <span className='text-red-400 text-xs ml-2'>
+                          {t.gameOver.you}
+                        </span>
                       )}
                       {player.isLiar && (
                         <span className='text-purple-400 text-xs ml-2'>
-                          (Era el mentiroso)
+                          {t.gameOver.wasLiar}
                         </span>
                       )}
                     </div>
@@ -237,21 +240,20 @@ export default function GameOver({
           >
             {currentPlayer.isLiar
               ? liarWon
-                ? '🎉 ¡Lograste engañar a todos!'
-                : '😔 Te descubrieron'
+                ? t.gameOver.winLiar
+                : t.gameOver.loseLiar
               : playersWon
-                ? '🎉 ¡Bien hecho, atraparon al mentiroso!'
-                : '😔 El mentiroso ganó esta vez'}
+                ? t.gameOver.winHonest
+                : t.gameOver.loseHonest}
           </p>
         </div>
 
-        {/* Botón para Nueva Partida */}
         <button
           onClick={onBackToHome}
           className='w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold py-4 rounded-lg transition-all hover:scale-105 shadow-lg shadow-blue-500/30 flex items-center justify-center gap-3'
         >
           <Home className='w-5 h-5' />
-          Nueva Partida
+          {t.app.newGame}
         </button>
       </div>
     </div>

@@ -5,6 +5,8 @@ export interface GameSession {
   roomId: string
   playerId: string
   code: string
+  // P2-T4: prueba de titularidad del asiento (solo ACK/canal privado).
+  secret: string
 }
 
 const KEY = 'who-lies-session'
@@ -25,9 +27,15 @@ export function loadSession(): GameSession | null {
     if (
       typeof s.roomId === 'string' &&
       typeof s.playerId === 'string' &&
-      typeof s.code === 'string'
+      typeof s.code === 'string' &&
+      typeof s.secret === 'string'
     ) {
-      return { roomId: s.roomId, playerId: s.playerId, code: s.code }
+      return {
+        roomId: s.roomId,
+        playerId: s.playerId,
+        code: s.code,
+        secret: s.secret,
+      }
     }
     return null
   } catch {

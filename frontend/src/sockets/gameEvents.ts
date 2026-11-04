@@ -5,11 +5,20 @@ import type { Room, VotingResults } from '../store/useGameStore'
 
 export const setupGameEvents = () => {
   const socket = socketService.getSocket()
-  const { setRoom, setCurrentPlayer, setVotingResults } = useGameStore.getState()
+  const { setRoom, setCurrentPlayer, setVotingResults } =
+    useGameStore.getState()
 
   // P0-T2: rol privado por canal directo (el broadcast es público, sin isLiar).
   socket.on('yourPlayerUpdated', (player) => {
     setCurrentPlayer(player)
+  })
+
+  // P3: estado de conexión para el banner offline (no bloquea el juego).
+  socket.on('connect', () => {
+    useGameStore.getState().setConnected(true)
+  })
+  socket.on('disconnect', () => {
+    useGameStore.getState().setConnected(false)
   })
 
   // P1-B1: rejoin en cada (re)conexión: cubre F5 (montaje) y caídas breves
@@ -18,15 +27,17 @@ export const setupGameEvents = () => {
   socket.on('connect', () => {
     const session = loadSession()
     if (!session) return
-    rejoinRoom(session.code, session.playerId)
+    rejoinRoom(session.code, session.playerId, session.secret)
       .then((response) => {
         const st = useGameStore.getState()
         st.setRoom(response.room)
         st.setCurrentPlayer(response.player)
       })
       .catch(() => {
-        // Sala/asiento desaparecidos: volver al inicio sin sesión.
+        // Sala/asiento desaparecidos (o secreto inválido): volver al inicio.
         clearSession()
+        // Provoca re-render para que RoomPage redirija a / (App lo toastea).
+        useGameStore.getState().setError('ROOM_NOT_FOUND')
       })
   })
 
@@ -140,10 +151,15 @@ export const joinRoom = (code: string, playerName: string): Promise<any> => {
 }
 
 // P1-B1: reentrada con el mismo asiento (no crea Player nuevo).
-export const rejoinRoom = (code: string, playerId: string): Promise<any> => {
+// P2-T4: exige el secreto del asiento.
+export const rejoinRoom = (
+  code: string,
+  playerId: string,
+  secret: string
+): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('rejoinRoom', { code, playerId }, (response: any) => {
+    socket.emit('rejoinRoom', { code, playerId, secret }, (response: any) => {
       if (response.success) {
         resolve(response)
       } else {
@@ -155,13 +171,14 @@ export const rejoinRoom = (code: string, playerId: string): Promise<any> => {
 
 export const startGame = (
   roomId: string,
-  requesterPlayerId: string
+  requesterPlayerId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
     socket.emit(
       'startGame',
-      { roomId, requesterPlayerId },
+      { roomId, requesterPlayerId, secret },
       (response: any) => {
         if (response.success) {
           resolve(response)
@@ -175,45 +192,56 @@ export const startGame = (
 
 export const revealCharacter = (
   playerId: string,
-  roomId: string
+  roomId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('revealCharacter', { playerId, roomId }, (response: any) => {
-      if (response.success) {
-        resolve(response)
-      } else {
-        reject(new Error(response.error))
+    socket.emit(
+      'revealCharacter',
+      { playerId, roomId, secret },
+      (response: any) => {
+        if (response.success) {
+          resolve(response)
+        } else {
+          reject(new Error(response.error))
+        }
       }
-    })
+    )
   })
 }
 
 export const setPlayerReady = (
   playerId: string,
-  roomId: string
+  roomId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
-    socket.emit('setPlayerReady', { playerId, roomId }, (response: any) => {
-      if (response.success) {
-        resolve(response)
-      } else {
-        reject(new Error(response.error))
+    socket.emit(
+      'setPlayerReady',
+      { playerId, roomId, secret },
+      (response: any) => {
+        if (response.success) {
+          resolve(response)
+        } else {
+          reject(new Error(response.error))
+        }
       }
-    })
+    )
   })
 }
 
 export const startVoting = (
   roomId: string,
-  requesterPlayerId: string
+  requesterPlayerId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
     socket.emit(
       'startVoting',
-      { roomId, requesterPlayerId },
+      { roomId, requesterPlayerId, secret },
       (response: any) => {
         if (response.success) {
           resolve(response)
@@ -228,13 +256,14 @@ export const startVoting = (
 export const submitVote = (
   roomId: string,
   voterId: string,
-  votedForId: string
+  votedForId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
     socket.emit(
       'submitVote',
-      { roomId, voterId, votedForId },
+      { roomId, voterId, votedForId, secret },
       (response: any) => {
         if (response.success) {
           resolve(response)
@@ -248,13 +277,14 @@ export const submitVote = (
 
 export const processVoting = (
   roomId: string,
-  requesterPlayerId: string
+  requesterPlayerId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
     socket.emit(
       'processVoting',
-      { roomId, requesterPlayerId },
+      { roomId, requesterPlayerId, secret },
       (response: any) => {
         if (response.success) {
           resolve(response)
@@ -268,13 +298,14 @@ export const processVoting = (
 
 export const continueGame = (
   roomId: string,
-  requesterPlayerId: string
+  requesterPlayerId: string,
+  secret: string
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const socket = socketService.getSocket()
     socket.emit(
       'continueGame',
-      { roomId, requesterPlayerId },
+      { roomId, requesterPlayerId, secret },
       (response: any) => {
         if (response.success) {
           resolve(response)
@@ -286,10 +317,14 @@ export const continueGame = (
   })
 }
 
-export const leaveRoom = (roomId: string, playerId: string): Promise<any> => {
+export const leaveRoom = (
+  roomId: string,
+  playerId: string,
+  secret: string
+): Promise<any> => {
   return new Promise((resolve) => {
     const socket = socketService.getSocket()
-    socket.emit('leaveRoom', { roomId, playerId }, (response: any) => {
+    socket.emit('leaveRoom', { roomId, playerId, secret }, (response: any) => {
       resolve(response)
     })
   })

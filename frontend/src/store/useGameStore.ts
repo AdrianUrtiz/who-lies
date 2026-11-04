@@ -17,6 +17,8 @@ export interface PublicPlayer {
 export interface PrivatePlayer extends PublicPlayer {
   isLiar: boolean
   character: string | null
+  // P2-T4: secreto del asiento (solo ACK/canal privado, nunca broadcast).
+  secret: string
 }
 
 /** Alias histórico: el jugador propio siempre es privado. */
@@ -65,6 +67,7 @@ interface GameState {
   currentPlayer: Player | null
   loading: boolean
   error: string | null
+  connected: boolean
   votingResults: VotingResults | null
 
   // Acciones
@@ -72,6 +75,7 @@ interface GameState {
   setCurrentPlayer: (player: Player) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
+  setConnected: (connected: boolean) => void
   updatePlayers: (players: Player[]) => void
   setVotingResults: (results: VotingResults | null) => void
   reset: () => void
@@ -83,6 +87,7 @@ export const useGameStore = create<GameState>((set) => ({
   currentPlayer: null,
   loading: false,
   error: null,
+  connected: true,
   votingResults: null,
 
   // Acciones
@@ -93,6 +98,8 @@ export const useGameStore = create<GameState>((set) => ({
   setLoading: (loading) => set({ loading }),
 
   setError: (error) => set({ error }),
+
+  setConnected: (connected) => set({ connected }),
 
   updatePlayers: (players) =>
     set((state) => ({

@@ -3,6 +3,8 @@ import { Copy, Check, Users, Play } from 'lucide-react'
 import { startGame } from '../sockets/gameEvents'
 import { useGameStore } from '../store/useGameStore'
 import { getCategoryName } from '../constants/characters'
+import { notify } from '../ui/toast'
+import { useI18n } from '../i18n'
 import type { Room, Player } from '../store/useGameStore'
 
 interface LobbyProps {
@@ -12,6 +14,7 @@ interface LobbyProps {
 }
 
 export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   const [loading, setLoading] = useState(false)
   const { room: storeRoom } = useGameStore()
@@ -21,20 +24,29 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
   const players = currentRoom.players || []
 
   const handleCopyCode = async () => {
-    await navigator.clipboard.writeText(currentRoom.code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(currentRoom.code)
+      setCopied(true)
+      notify.success(t.lobby.copied)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      notify.error(t.lobby.copied)
+    }
   }
 
   const handleStartGame = async () => {
     if (players.length < 3) {
-      alert('Se necesitan al menos 3 jugadores para empezar')
+      notify.error(t.lobby.needThree)
       return
     }
 
     setLoading(true)
     try {
-      const res = await startGame(currentRoom.id, currentPlayer.id)
+      const res = await startGame(
+        currentRoom.id,
+        currentPlayer.id,
+        currentPlayer.secret
+      )
       // P0-T2: el ACK trae tu rol privado; el broadcast es público.
       if (res?.yourPlayer) {
         useGameStore.getState().setCurrentPlayer(res.yourPlayer)
@@ -44,7 +56,7 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
       }
     } catch (error) {
       console.error('Error starting game:', error)
-      alert('Error al iniciar el juego')
+      notify.error(error instanceof Error ? error.message : t.lobby.startError)
     } finally {
       setLoading(false)
     }
@@ -57,18 +69,21 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
           <div className='w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4'>
             <Users className='w-10 h-10 text-emerald-400' />
           </div>
-          <h2 className='text-3xl font-bold text-white mb-4'>Sala de Espera</h2>
+          <h2 className='text-3xl font-bold text-white mb-4'>
+            {t.lobby.title}
+          </h2>
 
           <div className='bg-slate-900/50 rounded-lg p-4 mb-4 inline-block'>
-            <p className='text-slate-400 text-sm mb-2'>Código de sala</p>
+            <p className='text-slate-400 text-sm mb-2'>{t.lobby.codeLabel}</p>
             <div className='flex items-center gap-3'>
               <span className='text-4xl font-mono font-bold text-white tracking-widest'>
                 {currentRoom.code}
               </span>
               <button
                 onClick={handleCopyCode}
+                aria-label={t.lobby.codeLabel}
+                title={t.lobby.codeLabel}
                 className='p-2 hover:bg-slate-700 rounded-lg transition-colors'
-                title='Copiar código'
               >
                 {copied ? (
                   <Check className='w-6 h-6 text-emerald-400' />
@@ -80,7 +95,7 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
           </div>
 
           <p className='text-slate-400'>
-            Categoría:{' '}
+            {t.lobby.category}:{' '}
             <span className='text-emerald-400 font-semibold'>
               {getCategoryName(currentRoom.categoryId)}
             </span>
@@ -90,14 +105,16 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
         <div className='mb-8'>
           <div className='flex items-center justify-between mb-4'>
             <h3 className='text-xl font-semibold text-white'>
-              Jugadores ({players.length})
+              {t.lobby.players} ({players.length})
             </h3>
             {players.length < 3 && (
-              <span className='text-sm text-amber-400'>Mínimo 3 jugadores</span>
+              <span className='text-sm text-amber-400' role='status'>
+                {t.lobby.minPlayers}
+              </span>
             )}
           </div>
 
-          <div className='space-y-2'>
+          <div className='space-y-2' aria-live='polite'>
             {players.map((player, index) => (
               <div
                 key={player.id}
@@ -125,15 +142,19 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
                 <span className='text-white font-medium flex-1'>
                   {player.name}
                   {player.id === currentPlayer.id && (
-                    <span className='text-emerald-400 text-sm ml-2'>(Tú)</span>
+                    <span className='text-emerald-400 text-sm ml-2'>
+                      {t.lobby.you}
+                    </span>
                   )}
                   {player.id === currentRoom.hostId && (
-                    <span className='text-amber-400 text-sm ml-2'>(Host)</span>
+                    <span className='text-amber-400 text-sm ml-2'>
+                      {t.lobby.host}
+                    </span>
                   )}
                   {/* P1-B2: presencia */}
                   {player.isConnected === false && (
                     <span className='text-slate-500 text-sm ml-2'>
-                      (desconectado)
+                      {t.lobby.disconnected}
                     </span>
                   )}
                 </span>
@@ -149,13 +170,13 @@ export default function Lobby({ room, currentPlayer, isHost }: LobbyProps) {
             className='w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-4 rounded-lg transition-colors shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-3'
           >
             <Play className='w-5 h-5' />
-            {loading ? 'Iniciando...' : 'Iniciar Partida'}
+            {loading ? t.lobby.starting : t.lobby.start}
           </button>
         )}
 
         {!isHost && (
           <div className='text-center text-slate-400'>
-            Esperando a que el host inicie la partida...
+            {t.lobby.waitingHost}
           </div>
         )}
       </div>

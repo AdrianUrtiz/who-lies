@@ -1,6 +1,8 @@
 import { Trophy, XCircle, Target, RefreshCw, Home } from 'lucide-react'
 import { continueGame } from '../sockets/gameEvents'
 import { useGameStore } from '../store/useGameStore'
+import { notify } from '../ui/toast'
+import { useI18n, fill } from '../i18n'
 import type { VotingResults, Player } from '../store/useGameStore'
 import { useState } from 'react'
 
@@ -17,6 +19,7 @@ export default function Results({
   isHost,
   onBackToHome,
 }: ResultsProps) {
+  const { t } = useI18n()
   const [loading, setLoading] = useState(false)
   const { room: storeRoom } = useGameStore()
 
@@ -27,10 +30,12 @@ export default function Results({
   const handleContinueGame = async () => {
     setLoading(true)
     try {
-      await continueGame(currentRoom.id, currentPlayer.id)
+      await continueGame(currentRoom.id, currentPlayer.id, currentPlayer.secret)
     } catch (error) {
       console.error('Error continuing game:', error)
-      alert('Error al continuar el juego')
+      notify.error(
+        error instanceof Error ? error.message : t.results.continueError
+      )
     } finally {
       setLoading(false)
     }
@@ -63,17 +68,17 @@ export default function Results({
           </div>
 
           <h2 className='text-4xl font-bold text-white mb-2'>
-            {playersWon && '¡Los Jugadores Ganan!'}
-            {liarWon && '¡El Mentiroso Gana!'}
-            {tie && '¡Empate!'}
-            {!gameFinished && !tie && '¡Jugador Eliminado!'}
+            {playersWon && t.results.playersWin}
+            {liarWon && t.results.liarWin}
+            {tie && t.results.tieTitle}
+            {!gameFinished && !tie && t.results.eliminatedTitle}
           </h2>
 
           <p className='text-slate-400 text-lg'>
-            {playersWon && 'Atraparon al mentiroso'}
-            {liarWon && 'El mentiroso logró engañar a todos'}
-            {tie && 'Votación empatada: revoten para desempatar'}
-            {!gameFinished && !tie && 'El juego continúa...'}
+            {playersWon && t.results.playersWinHint}
+            {liarWon && t.results.liarWinHint}
+            {tie && t.results.tieHint}
+            {!gameFinished && !tie && t.results.continueHint}
           </p>
         </div>
 
@@ -82,70 +87,72 @@ export default function Results({
           {tie || !eliminatedPlayer ? (
             <div className='bg-amber-500/10 border border-amber-500/30 rounded-lg p-6 text-center'>
               <p className='text-amber-300 text-xl font-bold mb-2'>
-                Votación empatada
+                {t.results.tieBody1}
               </p>
-              <p className='text-slate-300'>
-                Nadie es eliminado. Vuelvan a discutir y voten de nuevo.
-              </p>
+              <p className='text-slate-300'>{t.results.tieBody2}</p>
             </div>
           ) : (
             <>
-          {/* Jugador Eliminado */}
-          <div className='mb-8'>
-            <h3 className='text-xl font-semibold text-white mb-4 text-center'>
-              Jugador Eliminado
-            </h3>
-            <div className='bg-red-500/10 border border-red-500/30 rounded-lg p-6 flex items-center gap-4'>
-              <div className='w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center font-bold text-2xl text-red-400'>
-                {eliminatedPlayer.name.charAt(0).toUpperCase()}
+              {/* Jugador Eliminado */}
+              <div className='mb-8'>
+                <h3 className='text-xl font-semibold text-white mb-4 text-center'>
+                  {t.results.eliminated}
+                </h3>
+                <div className='bg-red-500/10 border border-red-500/30 rounded-lg p-6 flex items-center gap-4'>
+                  <div className='w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center font-bold text-2xl text-red-400'>
+                    {eliminatedPlayer.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className='flex-1'>
+                    <p className='text-2xl font-bold text-white mb-1'>
+                      {eliminatedPlayer.name}
+                    </p>
+                    <p className='text-slate-400'>
+                      {liar && eliminatedPlayer.id === liar.id
+                        ? t.results.wasLiar
+                        : t.results.wasInnocent}
+                    </p>
+                  </div>
+                  {eliminatedPlayer.id === currentPlayer.id && (
+                    <div className='text-red-400 font-semibold'>
+                      {t.results.you}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className='flex-1'>
-                <p className='text-2xl font-bold text-white mb-1'>
-                  {eliminatedPlayer.name}
-                </p>
-                <p className='text-slate-400'>
-                  {liar && eliminatedPlayer.id === liar.id
-                    ? '🎭 Era el MENTIROSO'
-                    : '✅ Era inocente'}
-                </p>
-              </div>
-              {eliminatedPlayer.id === currentPlayer.id && (
-                <div className='text-red-400 font-semibold'>(Tú)</div>
-              )}
-            </div>
-          </div>
 
-          {/* Info del Mentiroso (P0-T2: solo viaja si terminó/fue cazado) */}
-          {liar ? (
-          <div className='mb-8'>
-            <h3 className='text-xl font-semibold text-white mb-4 text-center'>
-              El Mentiroso
-            </h3>
-            <div className='bg-purple-500/10 border border-purple-500/30 rounded-lg p-6 flex items-center gap-4'>
-              <div className='w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center text-4xl'>
-                ❓
-              </div>
-              <div className='flex-1'>
-                <p className='text-2xl font-bold text-white mb-1'>
-                  {liar.name}
-                </p>
-                <p className='text-purple-300'>
-                  No sabía que el personaje era:{' '}
-                  <span className='font-semibold'>
-                    {liar.character || 'Desconocido'}
-                  </span>
-                </p>
-              </div>
-              {liar.id === currentPlayer.id && (
-                <div className='text-purple-400 font-semibold'>(Tú)</div>
+              {/* Info del Mentiroso (P0-T2: solo viaja si terminó/fue cazado) */}
+              {liar ? (
+                <div className='mb-8'>
+                  <h3 className='text-xl font-semibold text-white mb-4 text-center'>
+                    {t.results.liarTitle}
+                  </h3>
+                  <div className='bg-purple-500/10 border border-purple-500/30 rounded-lg p-6 flex items-center gap-4'>
+                    <div className='w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center text-4xl'>
+                      ❓
+                    </div>
+                    <div className='flex-1'>
+                      <p className='text-2xl font-bold text-white mb-1'>
+                        {liar.name}
+                      </p>
+                      <p className='text-purple-300'>
+                        {t.results.liarUnknown}{' '}
+                        <span className='font-semibold'>
+                          {liar.character || t.results.unknown}
+                        </span>
+                      </p>
+                    </div>
+                    {liar.id === currentPlayer.id && (
+                      <div className='text-purple-400 font-semibold'>
+                        {t.results.you}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className='mb-8 bg-slate-900/50 rounded-lg p-4 text-center text-slate-400'>
+                  {t.results.liarHidden}
+                </div>
               )}
-            </div>
-          </div>
-          ) : (
-            <div className='mb-8 bg-slate-900/50 rounded-lg p-4 text-center text-slate-400'>
-              La identidad del mentiroso sigue oculta... el juego continúa.
-            </div>
-          )}
             </>
           )}
 
@@ -153,8 +160,9 @@ export default function Results({
           {!gameFinished && (
             <div>
               <h3 className='text-xl font-semibold text-white mb-4 text-center'>
-                Jugadores Activos (
-                {currentRoom.players.filter((p) => !p.isEliminated).length})
+                {fill(t.results.active, {
+                  n: currentRoom.players.filter((p) => !p.isEliminated).length,
+                })}
               </h3>
               <div className='space-y-2'>
                 {currentRoom.players
@@ -183,7 +191,7 @@ export default function Results({
                         {player.name}
                         {player.id === currentPlayer.id && (
                           <span className='text-emerald-400 text-sm ml-2'>
-                            (Tú)
+                            {t.results.you}
                           </span>
                         )}
                       </span>
@@ -204,16 +212,16 @@ export default function Results({
             >
               <RefreshCw className='w-5 h-5' />
               {loading
-                ? 'Continuando...'
-                : 'Continuar Juego (Ronda ' +
-                  (currentRoom.currentRound + 1) +
-                  ')'}
+                ? t.results.continuing
+                : fill(t.results.continue, {
+                    n: currentRoom.currentRound + 1,
+                  })}
             </button>
           )}
 
           {!gameFinished && !isHost && (
             <div className='text-center text-slate-400 bg-slate-800/30 backdrop-blur-lg rounded-lg p-4 border border-slate-700'>
-              Esperando a que el host continúe el juego...
+              {t.results.waitHost}
             </div>
           )}
 
@@ -223,7 +231,7 @@ export default function Results({
               className='w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold py-4 rounded-lg transition-colors shadow-lg shadow-blue-500/30 flex items-center justify-center gap-3'
             >
               <Home className='w-5 h-5' />
-              Nueva Partida
+              {t.app.newGame}
             </button>
           )}
         </div>
