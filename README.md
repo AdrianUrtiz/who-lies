@@ -76,7 +76,8 @@ who-lies/
 │   │   └── main.ts
 │   ├── prisma/
 │   │   └── schema.prisma  # Esquema de BD
-│   └── docker-compose.yml # PostgreSQL
+│   ├── Dockerfile         # Multi-stage: development / production
+│   └── docker-entrypoint.sh # migrate deploy + arranque (prod)
 │
 ├── frontend/              # Vite + React + TypeScript
 │   ├── src/
@@ -84,10 +85,14 @@ who-lies/
 │   │   ├── sockets/      # Socket.IO client
 │   │   ├── store/        # Zustand store
 │   │   └── App.tsx
+│   ├── Dockerfile        # Multi-stage: development / Nginx prod
+│   ├── nginx.conf        # SPA fallback + caché (prod)
 │   └── .env
 │
-├── SETUP.md              # Guía de instalación detallada
-├── start-dev.sh          # Script de inicio rápido
+├── compose.yml           # Dev: postgres + backend + frontend
+├── compose.prod.yml      # Override prod (sin volúmenes, sin exponer DB)
+├── .env.development      # Secretos dev (valores seguros)
+├── .env.production.example # Plantilla para el servidor
 └── README.md             # Este archivo
 ```
 
@@ -100,9 +105,27 @@ who-lies/
 
 ## 📝 Comandos Útiles
 
-### Backend
+### Docker (flujo recomendado)
 
 ```bash
+# Desarrollo: postgres + backend (hot-reload) + frontend (HMR)
+docker compose --env-file .env.development up --build
+
+# Aplicar migraciones (primera vez o al cambiar prisma/schema)
+docker compose --env-file .env.development exec backend npx prisma migrate deploy
+
+# Producción en servidor propio:
+# 1. cp .env.production.example .env.production && editar secretos
+# 2. VITE_SOCKET_URL se embebe en el build -> rebuild por entorno
+docker compose --env-file .env.production -f compose.yml -f compose.prod.yml up -d --build
+```
+
+### Backend (nativo, sin Docker para app; DB sí en Docker)
+
+```bash
+# Levantar solo postgres desde la raíz
+docker compose --env-file .env.development up -d postgres
+
 cd backend
 
 # Desarrollo
@@ -113,9 +136,9 @@ npx prisma studio          # Abrir interfaz de BD
 npx prisma migrate dev     # Ejecutar migraciones
 npx prisma generate        # Generar cliente
 
-# Docker
-docker-compose up -d       # Iniciar PostgreSQL
-docker-compose down        # Detener PostgreSQL
+# Docker (desde la raíz del repo)
+docker compose --env-file .env.development up -d   # Iniciar PostgreSQL
+docker compose --env-file .env.development down    # Detener PostgreSQL
 ```
 
 ### Frontend
@@ -136,9 +159,9 @@ npm run preview
 ### PostgreSQL no inicia
 
 ```bash
-cd backend
-docker-compose down -v
-docker-compose up -d
+# ⚠️ down -v BORRA los datos de la DB (volumen postgres_data)
+docker compose --env-file .env.development down -v
+docker compose --env-file .env.development up -d postgres
 ```
 
 ### Error de conexión Socket.IO
