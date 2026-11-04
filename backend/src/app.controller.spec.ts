@@ -15,8 +15,9 @@ describe('AppController', () => {
   })
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!')
+    // P0-T7: el scaffold esperaba "Hello World!" pero AppService devuelve "I am alive".
+    it('should return "I am alive"', () => {
+      expect(appController.getHello()).toBe('I am alive')
     })
   })
 })
