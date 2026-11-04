@@ -1,3 +1,6 @@
 node_modules
 /dist
 .env
+# Secretos reales de producción (solo vive en el servidor, ver .env.production.example)
+.env.production
+.env.*.local

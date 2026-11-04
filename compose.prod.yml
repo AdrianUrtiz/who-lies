@@ -1,0 +1,40 @@
+# Override de producción para servidor propio.
+# Uso: docker compose --env-file .env.production -f compose.yml -f compose.prod.yml up -d --build
+#
+# Cambios vs dev:
+# - Imágenes "production" (multi-stage, sin volúmenes de código).
+# - Postgres SIN puerto publicado (no exponer la DB a internet).
+# - restart: always.
+# NOTA: VITE_SOCKET_URL se embebe en el build del frontend -> rebuild por entorno.
+
+services:
+  postgres:
+    restart: always
+    ports: !reset []
+
+  backend:
+    build:
+      context: ./backend
+      target: production
+    restart: always
+    volumes: !reset []
+    command: !reset []
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL en .env.production}
+      PORT: 3001
+      CORS_ORIGIN: ${CORS_ORIGIN:?Define CORS_ORIGIN en .env.production}
+    # Las migraciones corren en el entrypoint (prisma migrate deploy).
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+      args:
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:?Define VITE_SOCKET_URL en .env.production}
+    restart: always
+    volumes: !reset []
+    command: !reset []
+    environment: !reset []
+    ports: !override
+      - '${FRONTEND_PORT:-80}:80'
