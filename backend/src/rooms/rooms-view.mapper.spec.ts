@@ -15,6 +15,7 @@ const FULL_PLAYER = {
   isReady: true,
   isEliminated: false,
   isConnected: true,
+  secret: '123e4567-e89b-42d3-a456-426614174099',
   joinedAt: new Date('2026-01-01'),
   passwordHash: 'x-secret-leak-check',
 }
@@ -41,13 +42,42 @@ describe('rooms-view.mapper (P0-T2)', () => {
     const priv: any = toPrivatePlayer(FULL_PLAYER)
     expect(priv.isLiar).toBe(true)
     expect(priv.character).toBe('Iron Man')
+    // P2-T4: el secreto viaja solo aquí, nunca en la pública.
+    expect(priv.secret).toBe(FULL_PLAYER.secret)
     expect('passwordHash' in priv).toBe(false)
+    const pub2: any = toPublicPlayer(FULL_PLAYER, false)
+    expect('secret' in pub2).toBe(false)
   })
 
-  it('FINISHED revela roles; resto de estados no', () => {
+  it('FINISHED revela roles pero NUNCA el secret', () => {
     const finished: any = toPublicPlayer(FULL_PLAYER, true)
     expect(finished.isLiar).toBe(true)
     expect(finished.character).toBe('Iron Man')
+    // P2: el secreto no viaja ni siquiera con roles revelados.
+    expect('secret' in finished).toBe(false)
+    expect('passwordHash' in finished).toBe(false)
+
+    const roomFinished: any = toPublicRoom({
+      id: 'r',
+      status: 'FINISHED',
+      players: [FULL_PLAYER],
+      votes: [
+        {
+          id: 'v1',
+          roomId: 'r',
+          voterId: FULL_PLAYER.id,
+          votedForId: 'other',
+          round: 1,
+          voter: FULL_PLAYER,
+          votedFor: { ...FULL_PLAYER, id: 'other', isLiar: false },
+        },
+      ],
+    })
+    expect(roomFinished.players[0].isLiar).toBe(true)
+    expect(JSON.stringify(roomFinished)).not.toContain('secret')
+    expect(JSON.stringify(roomFinished)).not.toContain(
+      FULL_PLAYER.secret as string,
+    )
   })
 
   it('toPublicRoom sanea votes[].voter/votedFor anidados', () => {

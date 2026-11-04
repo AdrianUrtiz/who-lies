@@ -60,6 +60,7 @@ function player(id: string, overrides: Record<string, unknown> = {}) {
     isReady: false,
     isEliminated: false,
     joinedAt: new Date(),
+    secret: `secret-${id.slice(-4)}`,
     ...overrides,
   }
 }
@@ -343,5 +344,66 @@ describe('RoomsService (unit, prisma mock)', () => {
     expect(finishedWhere.finishedAt.lt).toEqual(
       new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
     )
+  })
+
+  it('P2-T4: secreto erróneo bloquea mutaciones aunque el resto valide', async () => {
+    const { prisma, delegates } = makePrismaMock()
+    const service = new RoomsService(prisma)
+    const players = [player(UUIDS[0]), player(UUIDS[1]), player(UUIDS[2])]
+    delegates.room.findUnique.mockResolvedValue(
+      room(RoomStatus.WAITING, players),
+    )
+    delegates.player.findUnique.mockImplementation(async (args: any) =>
+      players.find((p) => p.id === args.where.id),
+    )
+
+    // Secreto correcto pasa el check (falla después por falta de jugadores/estado, no por secreto).
+    await expect(
+      service.startGame(ROOM_ID, HOST_ID, 'wrong-secret'),
+    ).rejects.toThrow()
+    try {
+      await service.startGame(ROOM_ID, HOST_ID, 'wrong-secret')
+      throw new Error('no debería pasar')
+    } catch (e) {
+      if ((e as Error).message === 'no debería pasar') throw e
+      const p = wsPayload(e)
+      expect(p.code).toBe('FORBIDDEN')
+      expect(p.message).toMatch(/INVALID_SEAT/)
+    }
+
+    delegates.room.findUnique.mockResolvedValue({
+      ...room(RoomStatus.VOTING, players),
+      votes: [],
+    })
+    try {
+      await service.submitVote(
+        ROOM_ID,
+        UUIDS[0],
+        UUIDS[1],
+        UUIDS[0],
+        'wrong-secret',
+      )
+      throw new Error('no debería pasar')
+    } catch (e) {
+      if ((e as Error).message === 'no debería pasar') throw e
+      expect(wsPayload(e).code).toBe('FORBIDDEN')
+    }
+
+    try {
+      await service.revealCharacter(UUIDS[0], ROOM_ID, UUIDS[0], 'wrong-secret')
+      throw new Error('no debería pasar')
+    } catch (e) {
+      if ((e as Error).message === 'no debería pasar') throw e
+      expect(wsPayload(e).code).toBe('FORBIDDEN')
+    }
+
+    try {
+      await service.removePlayer(UUIDS[0], ROOM_ID, UUIDS[0], 'wrong-secret')
+      throw new Error('no debería pasar')
+    } catch (e) {
+      if ((e as Error).message === 'no debería pasar') throw e
+      expect(wsPayload(e).code).toBe('FORBIDDEN')
+    }
+    expect(delegates.player.delete).not.toHaveBeenCalled()
   })
 })

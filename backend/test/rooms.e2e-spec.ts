@@ -4,6 +4,7 @@ import { io, Socket } from 'socket.io-client'
 import { AppModule } from './../src/app.module'
 import { PrismaService } from './../src/prisma/prisma.service'
 import { RoomsService } from './../src/rooms/rooms.service'
+import { WsRateLimitService } from './../src/common/rate-limit/ws-rate-limit.service'
 
 /**
  * E2E de salas (P0 gate).
@@ -70,6 +71,7 @@ describe('Rooms (e2e, socket + service)', () => {
   let app: INestApplication
   let prisma: PrismaService
   let service: RoomsService
+  let rateLimit: WsRateLimitService | undefined
   let port: number
   let url: string
   let dbAvailable = true
@@ -99,6 +101,11 @@ describe('Rooms (e2e, socket + service)', () => {
 
     prisma = app.get(PrismaService, { strict: false })
     service = app.get(RoomsService, { strict: false })
+    try {
+      rateLimit = app.get(WsRateLimitService, { strict: false })
+    } catch {
+      rateLimit = undefined
+    }
 
     try {
       await prisma.$queryRaw`SELECT 1`
@@ -131,6 +138,12 @@ describe('Rooms (e2e, socket + service)', () => {
   })
 
   beforeEach(async () => {
+    // P2-T2: ventanas limpias por test (el límite es por IP compartida).
+    try {
+      rateLimit?.reset()
+    } catch {
+      // noop
+    }
     if (!dbAvailable || !prisma) return
     // Limpieza total, orden por FK.
     await prisma.vote.deleteMany().catch(() => undefined)
@@ -201,9 +214,11 @@ describe('Rooms (e2e, socket + service)', () => {
 
       const gameStartedP = waitFor(c2, 'gameStarted')
       const hostId: string = created.player.id
+      const hostSecret: string = created.player.secret
       const started = await emitAck(host, 'startGame', {
         roomId,
         requesterPlayerId: hostId,
+        secret: hostSecret,
       })
       expect(started.success).toBe(true)
       const startedRoom = await gameStartedP
@@ -231,6 +246,7 @@ describe('Rooms (e2e, socket + service)', () => {
       const sv = await emitAck(host, 'startVoting', {
         roomId,
         requesterPlayerId: hostId,
+        secret: hostSecret,
       })
       expect(sv.success).toBe(true)
       await votingStartedP
@@ -244,40 +260,44 @@ describe('Rooms (e2e, socket + service)', () => {
       )
       if (!victim) throw new Error('test: sin víctima')
       const victimId: string = victim.id
-      await emitAck(host, 'submitVote', {
-        roomId,
-        voterId: byName.get('Host'),
-        votedForId:
-          victimId === byName.get('Host') ? byName.get('P2') : victimId,
-      }).then((r) => expect(r.success).toBe(true))
-      await emitAck(c2, 'submitVote', {
-        roomId,
-        voterId: byName.get('P2'),
-        votedForId:
-          victimId === byName.get('P2') ? byName.get('Host') : victimId,
-      }).then((r) => expect(r.success).toBe(true))
-      await emitAck(c3, 'submitVote', {
-        roomId,
-        voterId: byName.get('P3'),
-        votedForId:
-          victimId === byName.get('P3') ? byName.get('Host') : victimId,
-      }).then((r) => expect(r.success).toBe(true))
+      const secretByName = new Map([
+        ['Host', created.player.secret],
+        ['P2', j2.player.secret],
+        ['P3', j3.player.secret],
+      ])
+      const voteAs = (sock: any, name: string) =>
+        emitAck(sock, 'submitVote', {
+          roomId,
+          voterId: byName.get(name),
+          votedForId:
+            victimId === byName.get(name)
+              ? byName.get(name === 'Host' ? 'P2' : 'Host')
+              : victimId,
+          secret: secretByName.get(name),
+        }).then((r) => expect(r.success).toBe(true))
+      await voteAs(host, 'Host')
+      await voteAs(c2, 'P2')
+      await voteAs(c3, 'P3')
 
       const resultsP = waitFor(host, 'votingResults')
       const proc = await emitAck(host, 'processVoting', {
         roomId,
         requesterPlayerId: hostId,
+        secret: hostSecret,
       })
       expect(proc.success).toBe(true)
       const results = await resultsP
       expect(results.eliminatedPlayer).toBeDefined()
       expect(typeof results.liarCaught).toBe('boolean')
+      // P2: ni siquiera en FINISHED viaja el secreto (roles sí, secret no).
+      expect(JSON.stringify(results)).not.toContain('secret')
 
       if (!results.gameFinished) {
         const continuedP = waitFor(host, 'gameContinued')
         const cont = await emitAck(host, 'continueGame', {
           roomId,
           requesterPlayerId: hostId,
+          secret: hostSecret,
         })
         expect(cont.success).toBe(true)
         const continued = await continuedP
@@ -300,6 +320,7 @@ describe('Rooms (e2e, socket + service)', () => {
     const res = await emitAck(host, 'startGame', {
       roomId: created.room.id,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     expect(res.success).toBe(false)
     expect(String(res.error)).toMatch(/at least 3/i)
@@ -320,6 +341,7 @@ describe('Rooms (e2e, socket + service)', () => {
     await emitAck(host, 'startGame', {
       roomId: created.room.id,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     const late = await emitAck(c4, 'joinRoom', { code, playerName: 'Tarde' })
     expect(late.success).toBe(false)
@@ -347,6 +369,7 @@ describe('Rooms (e2e, socket + service)', () => {
     const evil = await emitAck(c2, 'startGame', {
       roomId,
       requesterPlayerId: j2.player.id,
+      secret: j2.player.secret,
     })
     expect(evil.success).toBe(false)
     expect(String(evil.error)).toMatch(/host/i)
@@ -354,12 +377,14 @@ describe('Rooms (e2e, socket + service)', () => {
     const ok = await emitAck(host, 'startGame', {
       roomId,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     expect(ok.success).toBe(true)
     // No-host intenta votar-fase y continuar: FORBIDDEN.
     const evilVoting = await emitAck(c2, 'startVoting', {
       roomId,
       requesterPlayerId: j2.player.id,
+      secret: j2.player.secret,
     })
     expect(evilVoting.success).toBe(false)
   })
@@ -384,11 +409,13 @@ describe('Rooms (e2e, socket + service)', () => {
     await emitAck(host, 'startGame', {
       roomId,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     // c2 intenta revelar/ready como si fuera el host.
     const spoofReveal = await emitAck(c2, 'revealCharacter', {
       playerId: created.player.id,
       roomId,
+      secret: j2.player.secret,
     })
     expect(spoofReveal.success).toBe(false)
     expect(String(spoofReveal.error)).toMatch(/another player/i)
@@ -396,11 +423,13 @@ describe('Rooms (e2e, socket + service)', () => {
     await emitAck(host, 'startVoting', {
       roomId,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     const spoofVote = await emitAck(c2, 'submitVote', {
       roomId,
       voterId: created.player.id,
       votedForId: j2.player.id,
+      secret: j2.player.secret,
     })
     expect(spoofVote.success).toBe(false)
   })
@@ -420,16 +449,19 @@ describe('Rooms (e2e, socket + service)', () => {
     await emitAck(host, 'startGame', {
       roomId,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     await emitAck(host, 'startVoting', {
       roomId,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
 
     const self = await emitAck(host, 'submitVote', {
       roomId,
       voterId: created.player.id,
       votedForId: created.player.id,
+      secret: created.player.secret,
     })
     expect(self.success).toBe(false)
 
@@ -446,14 +478,17 @@ describe('Rooms (e2e, socket + service)', () => {
     await emitAck(host2, 'startGame', {
       roomId: c.room.id,
       requesterPlayerId: c.player.id,
+      secret: c.player.secret,
     })
     await emitAck(host2, 'startVoting', {
       roomId: c.room.id,
       requesterPlayerId: c.player.id,
+      secret: c.player.secret,
     })
     const empty = await emitAck(host2, 'processVoting', {
       roomId: c.room.id,
       requesterPlayerId: c.player.id,
+      secret: c.player.secret,
     })
     expect(empty.success).toBe(false)
     expect(String(empty.error)).toMatch(/no votes/i)
@@ -485,6 +520,7 @@ describe('Rooms (e2e, socket + service)', () => {
       const badId = await emitAck(s, 'startGame', {
         roomId: 'x'.repeat(36),
         requesterPlayerId: 'y'.repeat(36),
+        secret: '123e4567-e89b-42d3-a456-426614174000',
       })
       expect(badId.success).toBe(false)
       expect(String(badId.code ?? badId.error)).toMatch(/BAD_REQUEST|INVALID/i)
@@ -494,6 +530,7 @@ describe('Rooms (e2e, socket + service)', () => {
         roomId: '123e4567-e89b-42d3-a456-426614174000',
         voterId: '123e4567-e89b-42d3-a456-426614174000',
         votedForId: '123e4567-e89b-42d3-a456-426614174000',
+        secret: '123e4567-e89b-42d3-a456-426614174001',
       })
       expect(selfVote.success).toBe(false)
     },
@@ -521,6 +558,7 @@ describe('Rooms (e2e, socket + service)', () => {
     const started = await emitAck(host, 'startGame', {
       roomId: created.room.id,
       requesterPlayerId: created.player.id,
+      secret: created.player.secret,
     })
     expect(started.success).toBe(true)
     // El host recibe su rol privado en el ACK.
@@ -569,20 +607,24 @@ describe('Rooms (e2e, socket + service)', () => {
       })
       const roomId = created.room.id
       const hostPid: string = created.player.id
+      const hostSecret5: string = created.player.secret
       const first = await emitAck(host, 'startGame', {
         roomId,
         requesterPlayerId: hostPid,
+        secret: hostSecret5,
       })
       expect(first.success).toBe(true)
       const second = await emitAck(host, 'startGame', {
         roomId,
         requesterPlayerId: hostPid,
+        secret: hostSecret5,
       })
       expect(second.success).toBe(false)
 
       await emitAck(host, 'startVoting', {
         roomId,
         requesterPlayerId: hostPid,
+        secret: hostSecret5,
       })
       const room = await service.getRoomById(roomId)
       const others = room.players.filter((p) => p.id !== room.players[0].id)
@@ -593,8 +635,8 @@ describe('Rooms (e2e, socket + service)', () => {
       // Primer votante (players[0]) vota por otro para completar.
       await service.submitVote(roomId, room.players[0].id, others[0].id)
       const [r1, r2] = await Promise.allSettled([
-        service.processVotingResults(roomId, hostPid),
-        service.processVotingResults(roomId, hostPid),
+        service.processVotingResults(roomId, hostPid, hostSecret5),
+        service.processVotingResults(roomId, hostPid, hostSecret5),
       ])
       // P0: uno cumple, el otro falla (guard de status/transacción).
       const fulfilled = [r1, r2].filter((r) => r.status === 'fulfilled')
@@ -619,13 +661,16 @@ describe('Rooms (e2e, socket + service)', () => {
     await emitAck(c4, 'joinRoom', { code: created.room.code, playerName: 'C' })
     const roomId = created.room.id
     const hostPid: string = created.player.id
+    const hostSecret6: string = created.player.secret
     await emitAck(host, 'startGame', {
       roomId,
       requesterPlayerId: hostPid,
+      secret: hostSecret6,
     })
     await emitAck(host, 'startVoting', {
       roomId,
       requesterPlayerId: hostPid,
+      secret: hostSecret6,
     })
     const room = await service.getRoomById(roomId)
     const [p1, p2, p3, p4] = room.players
@@ -635,7 +680,7 @@ describe('Rooms (e2e, socket + service)', () => {
     await service.submitVote(roomId, p3.id, p1.id)
     await service.submitVote(roomId, p4.id, p2.id)
     const res: any = await service
-      .processVotingResults(roomId, hostPid)
+      .processVotingResults(roomId, hostPid, hostSecret6)
       .catch((e) => ({ __error: String(e?.message ?? e) }))
     // Comportamiento P0 deseado: empate declarado, sin eliminado, sigue en VOTING.
     expect(res.__error).toBeUndefined()
@@ -662,11 +707,12 @@ describe('Rooms (e2e, socket + service)', () => {
     })
     const roomId = created.room.id
 
-    // Socket fresco (simula F5) reclama el asiento de A.
+    // Socket fresco (simula F5) reclama el asiento de A con su secreto.
     const fresh = await connectedClient()
     const rej = await emitAck(fresh, 'rejoinRoom', {
       code: created.room.code,
       playerId: j2.player.id,
+      secret: j2.player.secret,
     })
     expect(rej.success).toBe(true)
     expect(rej.player.id).toBe(j2.player.id)
@@ -678,10 +724,107 @@ describe('Rooms (e2e, socket + service)', () => {
     const bad = await emitAck(fresh, 'rejoinRoom', {
       code: created.room.code,
       playerId: '123e4567-e89b-42d3-a456-426614174999',
+      secret: '123e4567-e89b-42d3-a456-426614174998',
     })
     expect(bad.success).toBe(false)
     const afterBad = await service.getRoomById(roomId)
     expect(afterBad.players).toHaveLength(3)
+  })
+
+  gate(
+    'P2-T4: secreto erróneo no roba el asiento y nunca se filtra',
+    async () => {
+      const host = await connectedClient()
+      const c2 = await connectedClient()
+      const c3 = await connectedClient()
+      const created = await emitAck(host, 'createRoom', {
+        categoryId: 'marvel',
+        hostName: 'H',
+      })
+      const j2 = await emitAck(c2, 'joinRoom', {
+        code: created.room.code,
+        playerName: 'A',
+      })
+      await emitAck(c3, 'joinRoom', {
+        code: created.room.code,
+        playerName: 'B',
+      })
+
+      // playerId válido + secreto erróneo -> FORBIDDEN.
+      const evil = await connectedClient()
+      const spoof = await emitAck(evil, 'rejoinRoom', {
+        code: created.room.code,
+        playerId: j2.player.id,
+        secret: '123e4567-e89b-42d3-a456-426614174997',
+      })
+      expect(spoof.success).toBe(false)
+      expect(String(spoof.code ?? spoof.error)).toMatch(
+        /FORBIDDEN|INVALID_SEAT/,
+      )
+
+      // El secreto nunca viaja en broadcasts (ni siquiera al dueño por sala).
+      const seen: any[] = []
+      c3.on('roomUpdated', (r) => seen.push(r))
+      await emitAck(evil, 'joinRoom', {
+        code: created.room.code,
+        playerName: 'C',
+      }).catch(() => null)
+      for (const u of seen) {
+        expect(JSON.stringify(u)).not.toContain('secret')
+      }
+      // El ACK privado sí lo incluye (es como el cliente lo guarda).
+      expect(typeof j2.player.secret).toBe('string')
+    },
+  )
+
+  gate('P2-T2: ráfaga de createRoom se limita con RATE_LIMITED', async () => {
+    process.env.RATE_LIMIT_CREATE_PER_MIN = '3'
+    try {
+      const socks: any[] = []
+      for (let i = 0; i < 4; i++) {
+        socks.push(await connectedClient())
+      }
+      const results: any[] = []
+      for (let i = 0; i < 4; i++) {
+        results.push(
+          await emitAck(socks[i], 'createRoom', {
+            categoryId: 'marvel',
+            hostName: `R${i}`,
+          }),
+        )
+      }
+      // Misma IP (localhost): las 3 primeras pasan, la 4ª se limita.
+      expect(results.slice(0, 3).every((r) => r.success)).toBe(true)
+      expect(results[3].success).toBe(false)
+      expect(String(results[3].code ?? results[3].error)).toMatch(
+        /RATE_LIMITED/,
+      )
+    } finally {
+      delete process.env.RATE_LIMIT_CREATE_PER_MIN
+    }
+  })
+
+  gate('P2-T1: con REDIS_URL los broadcasts siguen funcionando', async () => {
+    if (!process.env.REDIS_URL) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[rooms.e2e] SKIP P2-T1 (sin REDIS_URL). C1 real exige 2 réplicas en staging.',
+      )
+      return
+    }
+    const host = await connectedClient()
+    const c2 = await connectedClient()
+    const created = await emitAck(host, 'createRoom', {
+      categoryId: 'marvel',
+      hostName: 'H',
+    })
+    const updP = waitFor(host, 'roomUpdated')
+    await emitAck(c2, 'joinRoom', {
+      code: created.room.code,
+      playerName: 'A',
+    })
+    const upd: any = await updP
+    expect(upd.players).toHaveLength(2)
   })
 
   gate(
@@ -747,6 +890,7 @@ describe('Rooms (e2e, socket + service)', () => {
     const left = await emitAck(c3, 'leaveRoom', {
       roomId,
       playerId: j3.player.id,
+      secret: j3.player.secret,
     })
     expect(left.success).toBe(true)
     expect(left.closed).toBeUndefined()
@@ -754,7 +898,11 @@ describe('Rooms (e2e, socket + service)', () => {
     expect((await service.getRoomById(roomId)).players).toHaveLength(2)
 
     // Sale el host: el más antiguo (A) hereda.
-    await emitAck(host, 'leaveRoom', { roomId, playerId: hostPid })
+    await emitAck(host, 'leaveRoom', {
+      roomId,
+      playerId: hostPid,
+      secret: created.player.secret,
+    })
     const afterHost = await service.getRoomById(roomId)
     expect(afterHost.hostId).toBe(j2.player.id)
     expect(afterHost.players).toHaveLength(1)
@@ -764,6 +912,7 @@ describe('Rooms (e2e, socket + service)', () => {
     const fin = await emitAck(c2, 'leaveRoom', {
       roomId,
       playerId: j2.player.id,
+      secret: j2.player.secret,
     })
     expect(fin.success).toBe(true)
     expect(fin.closed).toBe(true)
